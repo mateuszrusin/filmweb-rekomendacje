@@ -3,8 +3,10 @@ from collections import defaultdict
 from operator import itemgetter
 # python -m movies_recommender.RecommenderItemBased
 from surprise.prediction_algorithms.matrix_factorization import SVD
+from surprise.prediction_algorithms.predictions import Prediction
 
 from movies_analyzer.Movies import Movies
+from movies_recommender.Evaluator import get_evaluation
 from movies_analyzer.RecommendationDataset import RecommendationDataSet
 
 from movies_recommender.Recommender import Recommender, test_recommendation
@@ -12,64 +14,81 @@ from surprise import KNNBasic
 
 
 class RecommenderItemBased(Recommender):
-    def __init__(self, recommendation_dataset):
-        super(RecommenderItemBased, self).__init__(recommendation_dataset, algorithm=SVD())
+    def __init__(self, recommendation_dataset: RecommendationDataSet, similarity='cosine'):
+        super(RecommenderItemBased, self).__init__(recommendation_dataset)
+        sim_options = {'name': similarity,
+                       'user_based': False
+                       }
+        self.algorithm = KNNBasic(sim_options=sim_options)
 
-    def get_recommendation(self, moviescore_df, columns, k=20, name='cosine', k_inner_item=100):
-            similar_items = self.get_similar_item_movie_ids(moviescore_df, columns,
-                                                            k=k, name=name,
-                                                            k_inner_item=k_inner_item)
-            return self.movies.get_movie_by_movie_ids([c[0] for c in similar_items])
+    def get_recommendation(self, moviescore_df, columns, k=20, k_inner_item=100):
+        similar_items = self.get_similar_movie_ids(moviescore_df, columns,
+                                                        k=k, k_inner_item=k_inner_item)
+        return self.movies.get_movie_by_movie_ids(similar_items)
 
-    def get_similar_item_movie_ids(self, moviescore_df, columns, k=20, name='cosine', k_inner_item=100):
+    def fit(self, dataset):
+        return self.algorithm.fit(dataset)
+
+    def test(self, test_set):
+        return self.algorithm.test(test_set)
+
+    def get_similar_movie_ids(self, moviescore_df, columns, k=20,  k_inner_item=100):
         """
             Based on similar item movies, find nearest movies to the watched
             :param
         """
-        sim_options = {'name': name,
-                       'user_based': False
-                       }
-        model = KNNBasic(sim_options=sim_options)
-        new_user_id, dataset = self.recommendation_dataset.get_dataset_with_extended_user(
-            moviescore_df,
-            columns)
-        dataset_full = dataset.build_full_trainset()
-        model.fit(dataset_full)
-
-        inner_user_id = dataset_full.to_inner_uid(new_user_id)
-
-        # Get most liked by movies
-        inner_item_ratings = dataset_full.ur[inner_user_id]
-        inner_item_most_liked = heapq.nlargest(k_inner_item, inner_item_ratings, key=lambda t: t[1])
-
-        # Get the stuff they rated, and add up ratings for each item, weighted by user similarity
-        candidates = defaultdict(float)
-        for item_id, rating in inner_item_most_liked:
-            similarity_row = model.sim[item_id]
-            for inner_id, score in enumerate(similarity_row):
-                candidates[inner_id] += score * (rating / 5.0)
+        full_dataset = self.algorithm.trainset
 
         # Build a dictionary of stuff the user has already seen
-        watched = {}
-        for inner_item_id, _ in dataset_full.ur[inner_user_id]:
-            watched[inner_item_id] = 1
+        watched = {full_dataset.to_inner_iid(str(int(i[0]))): i[1] for i in moviescore_df[columns].values}
 
-        return [(dataset_full.to_raw_iid(c[0]), c[1])
-                for c in sorted(candidates.items(), key=itemgetter(1), reverse=True)
-                if c[0] not in watched][:k]
+        # Get most liked movies
+        # inner_item_ratings = full_dataset.ur[inner_user_id]
+        most_liked = heapq.nlargest(k_inner_item, watched, key = watched.get) #['Ocena','OcenaImdb','averageRating'])[['movieId','OcenaImdb']]
+        
+        # Get the stuff they rated, and add up ratings for each item, weighted by user similarity
+        candidates = defaultdict(float)
+        for most_liked_inner_id in most_liked:
+            rating = watched[most_liked_inner_id]
+            similarity_row = self.algorithm.sim[most_liked_inner_id]
 
-    def process(self, movielens_df, i):
-        k = 10
-        print(f'Recommendation from ItemBased for "{i}":')
-        print(self.get_recommendation(
-            moviescore_df=movielens_df,
-            columns=['movieId', 'OcenaImdb'], k=k))
-        print(f'========================================================')
+            for inner_id, score in enumerate(similarity_row):
+                if inner_id!=most_liked_inner_id:
+                    candidates[inner_id] += score * (rating / 5.0)
 
+        # return top-n movies
+        return  [full_dataset.to_raw_iid(i) 
+                for i in heapq.nlargest(k, candidates, key = candidates.get)]
 
 if __name__ == '__main__':
-    movies = Movies()
-    recommendation_dataset = RecommendationDataSet(movies=movies)
-    recommender = RecommenderItemBased(recommendation_dataset)
+    from movies_recommender.RecommenderItemBased import RecommenderItemBased
 
-    test_recommendation(recommender=recommender, example_items=['arek'])
+    recommendation_dataset = RecommendationDataSet(movies=Movies())
+    recommender = RecommenderItemBased(recommendation_dataset)
+    assert recommender.__module__[:len('movies_recommender.')] == 'movies_recommender.'
+
+    test_recommendation(recommender=recommender, example_items=['arek','mateusz'], anti_test=False)
+
+    """ For test only
+    %load_ext autoreload
+    %autoreload 2
+    
+    from filmweb_integrator.fwimdbmerge.filmweb import Filmweb
+    from filmweb_integrator.fwimdbmerge.merger import Merger, get_json_df
+    from movies_recommender.Recommender import get_moviescore_df
+
+    recommendation_dataset = RecommendationDataSet(movies=Movies())
+    recommender = RecommenderItemBased(recommendation_dataset)
+    recommender.fit(recommender.recommendation_dataset.full_dataset)
+    self = recommender
+
+    # get recommendation for one user
+    merger = Merger(filmweb=Filmweb(), imdb=recommender.movies.imdb)
+    moviescore_df = get_moviescore_df(merger, recommender.movies,'arek')
+    k = 20
+    k_inner_item = 20
+    columns=['movieId', 'OcenaImdb']
+
+
+    self.get_recommendation(moviescore_df,columns)
+    """

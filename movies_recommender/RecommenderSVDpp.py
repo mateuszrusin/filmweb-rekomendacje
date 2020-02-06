@@ -7,15 +7,15 @@ from movies_analyzer.RecommendationDataset import RecommendationDataSet
 from movies_recommender.Evaluator import get_evaluation
 
 from movies_recommender.Recommender import Recommender, test_recommendation
-from surprise import SVD, KNNBasic
+from surprise import SVDpp, KNNBasic
 
 from movies_recommender.utils import get_top_n
 
 
-class RecommenderSVD(Recommender):
+class RecommenderSVDpp(Recommender):
     def __init__(self, recommendation_dataset):
-        super(RecommenderSVD, self).__init__(recommendation_dataset)
-        self.algorithm = SVD()
+        super(RecommenderSVDpp, self).__init__(recommendation_dataset)
+        self.algorithm = SVDpp()
 
     def fit(self, dataset):
         return self.algorithm.fit(dataset)
@@ -50,10 +50,10 @@ class RecommenderSVD(Recommender):
 
 if __name__ == '__main__':
     recommendation_dataset = RecommendationDataSet(movies=Movies())
-    from movies_recommender.RecommenderSVD import RecommenderSVD
-    recommender = RecommenderSVD(recommendation_dataset)
+    from movies_recommender.RecommenderSVDpp import RecommenderSVDpp
+    recommender = RecommenderSVDpp(recommendation_dataset)
     assert recommender.__module__[:len('movies_recommender.')] == 'movies_recommender.'
-
+    
     test_recommendation(recommender=recommender, example_items=['arek','mateusz'], anti_test=True)
 
 
@@ -64,9 +64,10 @@ if __name__ == '__main__':
     from filmweb_integrator.fwimdbmerge.filmweb import Filmweb
     from filmweb_integrator.fwimdbmerge.merger import Merger, get_json_df
     from movies_recommender.Recommender import get_moviescore_df
+    from movies_recommender.RecommenderSVDpp import RecommenderSVDpp
 
     recommendation_dataset = RecommendationDataSet(movies=Movies())
-    recommender = RecommenderSVD(recommendation_dataset)
+    recommender = RecommenderSVDpp(recommendation_dataset)
     recommender.fit(recommender.recommendation_dataset.full_dataset)
     self = recommender
 
